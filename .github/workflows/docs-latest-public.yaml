@@ -206,6 +206,45 @@ jobs:
             -f message="Update versions.json after ${DEPLOYED_VERSION} deploy" \
             -f content="$(echo "$payload" | base64 -w0)" \
             -f branch=gh-pages "${extra_args[@]}"
+      - name: Ensure root index.html redirect on gh-pages
+        # Each deploy only writes into its own version folder (target-folder above), so
+        # nothing ever creates a page at the gh-pages root and
+        # https://docs.tenstorrent.com/tt-metal/ fails to load. Create a small redirect
+        # to latest/ if one isn't there yet. An existing index.html is left untouched.
+        if: ${{ steps.deployment.outcome == 'success' }}
+        # Non-critical: the versioned docs are already live, so a failure here must not
+        # mark the deploy as failed.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if gh api "repos/${REPO}/contents/index.html?ref=gh-pages" --silent 2>/dev/null; then
+            echo "index.html already exists on gh-pages, nothing to do."
+            exit 0
+          fi
+
+          cat > root_index.html <<'EOF'
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=latest/">
+              <link rel="canonical" href="latest/">
+              <title>Redirecting to TT-Metalium documentation</title>
+            </head>
+            <body>
+              <a href="latest/">Go to the latest TT-Metalium documentation</a>
+            </body>
+          </html>
+          EOF
+
+          gh api --method PUT "repos/${REPO}/contents/index.html" \
+            -f message="Add root index.html redirecting to latest/" \
+            -f content="$(base64 -w0 root_index.html)" \
+            -f branch=gh-pages
       - name: Index docs into OpenSearch
         # The indexer reads the built HTML from the artifact downloaded above.
         # Non-critical post-deploy enhancement: a transient ingest failure must
